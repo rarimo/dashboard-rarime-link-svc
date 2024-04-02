@@ -72,18 +72,19 @@ func GetLinkByID(w http.ResponseWriter, r *http.Request) {
 
 	var (
 		authorized                = len(UserClaim(r)) > 0
-		who                       = "Authorized(owner)"
 		fulfillVerificationEvents = false
 	)
+
 	if !authorized {
-		who = "Public"
+		Log(r).Debug("Public proofs verification")
 	}
 	// preventing self-verification
 	if authorized && !auth.Authenticates(UserClaim(r), auth.UserGrant(link.UserID)) {
-		who = "Authorized(not owner)"
+		Log(r).Debug("Authorized(not owner) proofs verification")
 		fulfillVerificationEvents = true
+	} else if authorized {
+		Log(r).Debugf("Authorized(owner) proofs verification")
 	}
-	Log(r).Debugf("%s proofs verification", who)
 
 	response := resources.LinkResponse{
 		Data: resources.Link{
