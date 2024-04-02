@@ -5,6 +5,8 @@ import (
 
 	"github.com/go-chi/chi"
 	"github.com/google/uuid"
+	"github.com/rarimo/rarime-auth-svc/pkg/auth"
+	"github.com/rarimo/rarime-link-svc/internal/data"
 	"github.com/rarimo/rarime-link-svc/resources"
 	"gitlab.com/distributed_lab/ape"
 	"gitlab.com/distributed_lab/ape/problems"
@@ -68,6 +70,22 @@ func GetLinkByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var (
+		authorized                = len(UserClaim(r)) > 0
+		fulfillVerificationEvents = false
+	)
+
+	if !authorized {
+		Log(r).Debug("Public proofs verification")
+	}
+	// preventing self-verification
+	if authorized && !auth.Authenticates(UserClaim(r), auth.UserGrant(link.UserID)) {
+		Log(r).Debug("Authorized(not owner) proofs verification")
+		fulfillVerificationEvents = true
+	} else if authorized {
+		Log(r).Debugf("Authorized(owner) proofs verification")
+	}
+
 	response := resources.LinkResponse{
 		Data: resources.Link{
 			Key: resources.Key{
@@ -81,6 +99,7 @@ func GetLinkByID(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	proofs := make([]data.Proof, 0, len(links))
 	included := resources.Included{}
 	for _, linkToProof := range links {
 		proof, err := Storage(r).ProofQ().ProofByID(linkToProof.ProofID, false)
@@ -89,6 +108,9 @@ func GetLinkByID(w http.ResponseWriter, r *http.Request) {
 			ape.RenderErr(w, problems.InternalError())
 			return
 		}
+
+		proofs = append(proofs, *proof)
+
 		included.Add(&resources.Proof{
 			Key: resources.Key{
 				ID:   proof.ID.String(),
@@ -107,6 +129,16 @@ func GetLinkByID(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	response.Included = included
+
+	if fulfillVerificationEvents {
+		// ensured above on fulfillVerificationEvents assignment
+		verifier := UserClaim(r)[0].User
+		ok := getPointsForVerifyProofs(r, proofs, link.UserID, verifier)
+		if !ok {
+			ape.RenderErr(w, problems.InternalError())
+			return
+		}
+	}
 
 	ape.Render(w, response)
 }
